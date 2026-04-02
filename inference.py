@@ -3,10 +3,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-try:
-    from openai import OpenAI
-except ModuleNotFoundError:  # pragma: no cover - optional local fallback
-    OpenAI = None  # type: ignore[assignment]
+from openai import OpenAI
 
 from environment.env import EmergencyFirstResponseDecisionEngine
 from environment.models import Action, ActionType, Observation
@@ -14,19 +11,23 @@ from environment.tasks import TASKS
 from rl_agent import DEFAULT_Q_TABLE_PATH, QLearningEmergencyAgent
 
 
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "openai/gpt-4.1-mini")
+HF_TOKEN = os.getenv("HF_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
+BENCHMARK = os.getenv("OPENENV_BENCHMARK", "emergency_first_response_decision_engine")
+
+
 class BaselineEmergencyAgent:
-    def __init__(self, client: Any, model_name: str, use_model: bool, rl_agent: QLearningEmergencyAgent | None = None) -> None:
+    def __init__(self, client: OpenAI, model_name: str, rl_agent: QLearningEmergencyAgent | None = None) -> None:
         self._client = client
         self._model_name = model_name
-        self._use_model = use_model
         self._rl_agent = rl_agent
 
     def choose_action(self, observation: Observation) -> ActionType:
         if self._rl_agent is not None:
             return self._rl_agent.choose_action(observation, greedy=True)
-
-        if not self._use_model or self._client is None:
-            return self._fallback_policy(observation)
 
         prompt = self._build_prompt(observation)
         try:
@@ -73,42 +74,69 @@ class BaselineEmergencyAgent:
         return ActionType.MONITOR_PATIENT
 
 
-def build_client() -> tuple[Any, bool]:
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN")
-    base_url = os.getenv("API_BASE_URL")
-    if OpenAI is None or not api_key:
-        return None, False
-    if base_url:
-        return OpenAI(api_key=api_key, base_url=base_url.rstrip("/")), True
-    return OpenAI(api_key=api_key), True
+def build_client() -> OpenAI:
+    api_key = OPENAI_API_KEY or HF_TOKEN or "missing-token"
+    return OpenAI(base_url=API_BASE_URL.rstrip("/"), api_key=api_key)
+
+
+def log_start(task: str) -> None:
+    print(f"[START] task={task} env={BENCHMARK} model={MODEL_NAME}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+    error_value = error if error else "null"
+    print(
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_value}",
+        flush=True,
+    )
+
+
+def log_end(success: bool, steps: int, rewards: list[float]) -> None:
+    rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
+    print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
 
 
 def main() -> None:
-    model_name = os.getenv("MODEL_NAME", "gpt-4.1-mini")
-    client, use_model = build_client()
+    _ = LOCAL_IMAGE_NAME
+    client = build_client()
     learned_agent = QLearningEmergencyAgent()
     has_learned_policy = learned_agent.load(DEFAULT_Q_TABLE_PATH)
     agent = BaselineEmergencyAgent(
         client=client,
-        model_name=model_name,
-        use_model=use_model,
+        model_name=MODEL_NAME,
         rl_agent=learned_agent if has_learned_policy else None,
     )
     environment = EmergencyFirstResponseDecisionEngine()
 
     for task_id in TASKS:
-        print(f"[START] task={task_id}")
-        observation = environment.reset(task_id)
-        done = False
-        step_index = 0
+        rewards: list[float] = []
+        steps_taken = 0
+        success = False
+        log_start(task_id)
 
-        while not done:
-            action = agent.choose_action(observation)
-            observation, reward, done, _info = environment.step(Action(action_type=action))
-            print(f"[STEP] step={step_index} reward={reward}")
-            step_index += 1
+        try:
+            observation = environment.reset(task_id)
+            done = False
 
-        print(f"[END] task={task_id}")
+            while not done:
+                step_number = steps_taken + 1
+                action = agent.choose_action(observation)
+                error: str | None = None
+
+                try:
+                    observation, reward, done, info = environment.step(Action(action_type=action))
+                    success = bool(info.get("success", False))
+                except Exception as exc:
+                    reward = 0.0
+                    done = True
+                    error = str(exc)
+
+                rewards.append(reward)
+                steps_taken = step_number
+                log_step(step_number, action.value, reward, done, error)
+
+        finally:
+            log_end(success, steps_taken, rewards)
 
 
 if __name__ == "__main__":
