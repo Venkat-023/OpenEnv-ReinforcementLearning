@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -70,9 +70,9 @@ def list_tasks() -> list[dict[str, object]]:
 
 
 @app.post("/reset", response_model=StepOutput)
-def reset_environment(payload: ResetRequest) -> StepOutput:
+def reset_environment(payload: ResetRequest | None = Body(default=None)) -> StepOutput:
     try:
-        observation = environment.reset(task_id=payload.task_id)
+        observation = environment.reset(task_id=payload.task_id if payload else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return StepOutput(
