@@ -32,13 +32,13 @@ This makes the environment useful for agent evaluation, planning research, polic
 
 ## OpenEnv Interface
 
-The core environment class is [environment/env.py](C:\Users\admin\Desktop\New folder\environment\env.py) and implements:
+The core environment class is [environment/env.py](C:\Users\admin\Desktop\New Folder\environment\env.py) and implements:
 
 - `reset(task_id: str | None = None) -> Observation`
 - `step(action: Action) -> tuple[Observation, float, bool, dict]`
 - `state() -> InternalState`
 
-Typed models are defined in [environment/models.py](C:\Users\admin\Desktop\New folder\environment\models.py):
+Typed models are defined in [environment/models.py](C:\Users\admin\Desktop\New Folder\environment\models.py):
 
 - `Observation`
 - `Action`
@@ -46,7 +46,7 @@ Typed models are defined in [environment/models.py](C:\Users\admin\Desktop\New f
 - `StepOutput`
 - `InternalState`
 
-The OpenEnv metadata file is [openenv.yaml](C:\Users\admin\Desktop\New folder\openenv.yaml).
+The OpenEnv metadata file is [openenv.yaml](C:\Users\admin\Desktop\New Folder\openenv.yaml).
 
 ## Action Space
 
@@ -107,7 +107,7 @@ The `info` dictionary returned by `step()` includes a typed reward breakdown via
 
 ## RL Agent
 
-The trainable RL agent is implemented in [rl_agent.py](C:\Users\admin\Desktop\New folder\rl_agent.py).
+The trainable RL agent is implemented in [rl_agent.py](C:\Users\admin\Desktop\New Folder\rl_agent.py).
 
 Properties:
 
@@ -120,7 +120,7 @@ Properties:
 
 Training entrypoint:
 
-- [train_rl.py](C:\Users\admin\Desktop\New folder\train_rl.py)
+- [train_rl.py](C:\Users\admin\Desktop\New Folder\train_rl.py)
 
 Run:
 
@@ -136,7 +136,7 @@ This produces:
 
 ## Tasks
 
-Task definitions live in [environment/tasks.py](C:\Users\admin\Desktop\New folder\environment\tasks.py). Deterministic graders live in [environment/grader.py](C:\Users\admin\Desktop\New folder\environment\grader.py).
+Task definitions live in [environment/tasks.py](C:\Users\admin\Desktop\New Folder\environment\tasks.py). Deterministic graders live in [environment/grader.py](C:\Users\admin\Desktop\New Folder\environment\grader.py).
 
 ### Easy: `cardiac_arrest_easy`
 
@@ -184,7 +184,7 @@ The same action sequence always yields the same score.
 
 ## API Endpoints
 
-The FastAPI service in [app.py](C:\Users\admin\Desktop\New folder\app.py) exposes:
+The FastAPI service in [app.py](C:\Users\admin\Desktop\New Folder\app.py) exposes:
 
 - `GET /` : single-page UI when the frontend bundle exists
 - `GET /healthz` : health check
@@ -196,7 +196,7 @@ The FastAPI service in [app.py](C:\Users\admin\Desktop\New folder\app.py) expose
 
 ## Simple UI
 
-A minimal judge-friendly React UI is included in [frontend](C:\Users\admin\Desktop\New folder\frontend). In the containerized deployment it is served by FastAPI from the root URL, so judges only need one running service.
+A minimal judge-friendly React UI is included in [frontend](C:\Users\admin\Desktop\New Folder\frontend). In the containerized deployment it is served by FastAPI from the root URL, so judges only need one running service.
 
 Judge flow:
 
@@ -258,7 +258,7 @@ This repository is prepared for a Docker Space deployment:
 
 ## Running Inference
 
-The baseline script is [inference.py](C:\Users\admin\Desktop\New folder\inference.py).
+The baseline script is [inference.py](C:\Users\admin\Desktop\New Folder\inference.py).
 
 Inference behavior:
 
