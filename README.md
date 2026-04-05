@@ -333,17 +333,22 @@ python validate_submission.py
 
 The project is stronger than the initial version, but a few limits still matter:
 
-- the RL baseline is tuned for earlier task dynamics and may need retraining or reward retuning for the new deceptive hard task
+- the frontend action queue is manual and does not yet let the LLM autonomously plan and execute a live multi-step sequence from the web UI
+- the backend still advances one action per `/step`; there is no native batch or macro-action endpoint
+- the RL baseline is tuned for earlier task dynamics and may need retraining or reward retuning for the deceptive hard task
 - scenario-aware `available_actions` improve realism, but they are still rule-based rather than fully physiology-driven
-- the frontend depends on the backend’s current action ordering and is not yet split into reusable components
+- reward explanations are rule-based templates and do not yet describe compound effects such as "good action, but total reward dropped because progression worsened"
+- the observation model is intentionally compact and does not yet expose richer cues like skin signs, bystander narration, or trend summaries
 - some medically meaningful interventions are abstracted into coarse actions rather than detailed sub-skills
-- the reward model is clinically guided but still simplified for deterministic benchmark use
+- the current frontend is much clearer now, but it still lacks explicit "why unavailable" explanations for actions that are not currently offered
+- the environment remains deterministic by design, which is useful for benchmarking but less realistic than noisy real-world presentation
 
 ## Recommended Next Enhancements
 
+- add a `Run with LLM` mode in the frontend that repeatedly calls the model and executes actions from live observations
 - retrain and retune the RL baseline against the deceptive hard task
 - add episode traces/history export for debugging policies
-- expose task-specific action hints separately from `available_actions`
+- expose task-specific action hints and disabled-action reasons separately from `available_actions`
 - add frontend badges for invalid-action penalties and deterioration events
 - extend trauma state with explicit shock markers such as skin signs or mental status changes over time
 
