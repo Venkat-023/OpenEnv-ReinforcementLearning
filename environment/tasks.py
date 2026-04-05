@@ -101,22 +101,23 @@ SEVERE_BLEEDING_MEDIUM = TaskDefinition(
 ROAD_ACCIDENT_HARD = TaskDefinition(
     task_id="road_accident_hard",
     difficulty=DifficultyLevel.HARD,
-    description="Dynamic roadside trauma requiring hazard awareness, hemorrhage control, airway management, and reassessment.",
+    description="Deceptive roadside trauma where minor visible bleeding hides evolving internal hemorrhagic shock.",
     scenario_summary=(
-        "A motorcyclist is lying beside a road after a collision. Traffic is still moving nearby. The patient "
-        "is confused, breathing shallowly, and has heavy bleeding from the thigh. There is no immediate clinical support."
+        "A crash victim is found beside the road after a low-speed collision. There is only a small amount of visible "
+        "bleeding from the abdomen, but the patient is unconscious with shallow breathing and cool pale skin. Traffic is "
+        "still passing nearby and there is no immediate medical support."
     ),
     initial_true_condition=PatientCondition(
-        conscious_status=ConsciousStatus.CONFUSED,
+        conscious_status=ConsciousStatus.UNCONSCIOUS,
         breathing_status=BreathingStatus.SHALLOW,
-        bleeding_severity=BleedingSeverity.SEVERE,
+        bleeding_severity=BleedingSeverity.CRITICAL,
         pulse_status=PulseStatus.WEAK,
         airway_status=AirwayStatus.COMPROMISED,
     ),
     initial_observed_condition=PatientCondition(
         conscious_status=ConsciousStatus.UNKNOWN,
         breathing_status=BreathingStatus.UNKNOWN,
-        bleeding_severity=BleedingSeverity.SEVERE,
+        bleeding_severity=BleedingSeverity.UNKNOWN,
         pulse_status=PulseStatus.UNKNOWN,
         airway_status=AirwayStatus.UNKNOWN,
     ),
@@ -129,16 +130,20 @@ ROAD_ACCIDENT_HARD = TaskDefinition(
     max_steps=9,
     optimal_sequence=[
         ActionType.CHECK_SCENE_SAFETY,
-        ActionType.CALL_EMERGENCY,
-        ActionType.APPLY_PRESSURE,
         ActionType.CHECK_BREATHING,
         ActionType.CONTROL_AIRWAY,
+        ActionType.CALL_EMERGENCY,
         ActionType.CHECK_PULSE,
+        ActionType.APPLY_PRESSURE,
         ActionType.MONITOR_PATIENT,
     ],
-    success_criteria="Hazards managed, emergency help activated, bleeding controlled, airway supported, and patient kept under observation.",
-    failure_criteria="Uncontrolled bleeding or worsening airway compromise leads to critical deterioration.",
-    hidden_notes={"injury_location": "thigh", "airway_risk": "vomiting"},
+    success_criteria="The agent works through ABC assessment, detects shock physiology, and stabilizes airway and circulation.",
+    failure_criteria="Superficial treatment or skipped circulation assessment allows hidden hemorrhagic shock to progress.",
+    hidden_notes={
+        "injury_location": "abdomen",
+        "hidden_condition": "internal_bleeding_hypovolemic_shock",
+        "visible_wound": "minor_abdominal_bleeding",
+    },
 )
 
 

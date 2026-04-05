@@ -103,9 +103,13 @@ class StepOutput(BaseModel):
 
 
 class RewardSignal(BaseModel):
-    value: float
+    action_reward: float
+    reason: str
+    time_decay_factor: float
+    total: float
+    value: float | None = None
     components: dict[str, float] = Field(default_factory=dict)
-    rationale: str
+    rationale: str | None = None
 
 
 class ResetRequest(BaseModel):

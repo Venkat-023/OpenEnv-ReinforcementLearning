@@ -1,5 +1,5 @@
 name: Emergency First-Response Decision Engine
-description: Deterministic decision-support environment for non-expert first responders managing cardiac arrest, hemorrhage, airway compromise, and restaurant emergency workflows.
+description: Deterministic decision-support environment for non-expert first responders managing cardiac arrest, hemorrhage, airway compromise, and deceptive trauma workflows.
 version: 1.0.0
 entrypoint: environment.env:EmergencyFirstResponseDecisionEngine
 observation_model: environment.models:Observation
@@ -28,15 +28,15 @@ tasks:
       - MONITOR_PATIENT
   - id: road_accident_hard
     difficulty: hard
-    description: Dynamic roadside trauma requiring reprioritization between hazards, hemorrhage, and airway compromise.
+    description: Deceptive roadside trauma where minor visible bleeding hides evolving internal hemorrhagic shock.
     grader: environment.grader:EmergencyTaskGrader.grade_hard
     optimal_sequence:
       - CHECK_SCENE_SAFETY
-      - CALL_EMERGENCY
-      - APPLY_PRESSURE
       - CHECK_BREATHING
       - CONTROL_AIRWAY
+      - CALL_EMERGENCY
       - CHECK_PULSE
+      - APPLY_PRESSURE
       - MONITOR_PATIENT
   - id: anaphylaxis_medium
     difficulty: medium

@@ -37,7 +37,6 @@ REVEALS: dict[ActionType, set[str]] = {
 
 VISIBLE_FROM_START: dict[str, set[str]] = {
     "severe_bleeding_medium": {"bleeding_severity"},
-    "road_accident_hard": {"bleeding_severity"},
 }
 
 
@@ -63,21 +62,32 @@ class EmergencyFirstResponseDecisionEngine:
         if action.action_type not in available_actions:
             self._state.last_action_effect = "Invalid action ignored."
             observation = self._build_observation()
-            info = self._build_info(
-                reward_signal=RewardSignal(
-                    value=-0.2,
-                    components={"invalid_action_penalty": -0.2},
-                    rationale=self._state.last_action_effect,
-                )
+            reward_signal = self._build_reward_signal(
+                action_reward=-0.2,
+                total_reward=-0.2,
+                time_decay_factor=1.0,
+                reason=self._grader.explain_reward(
+                    self._state.task_id,
+                    action.action_type,
+                    self._state.model_copy(deep=True),
+                    self._state.model_copy(deep=True),
+                    -0.2,
+                    1.0,
+                    invalid_action=True,
+                ),
+                components={"invalid_action_penalty": -0.2},
             )
+            info = self._build_info(reward_signal=reward_signal)
             info["error"] = "invalid_action"
             return observation, -0.2, False, info
 
+        prior_state = self._state.model_copy(deep=True)
         reward = -0.2
         reward_components: dict[str, float] = {"base_step_cost": -0.2}
         effect_messages: list[str] = []
         chosen_action = action.action_type
         prior_actions = list(self._state.actions_taken)
+        time_decay_factor = 1.0
 
         if prior_actions and prior_actions[-1] == chosen_action:
             reward -= 0.6
@@ -86,8 +96,9 @@ class EmergencyFirstResponseDecisionEngine:
 
         action_delta, action_metadata = self._apply_action(chosen_action, effect_messages)
         reward += action_delta
-        reward_components["action_delta"] = action_delta
+        reward_components["action_reward"] = action_delta
         reward_components.update(action_metadata)
+        time_decay_factor = action_metadata.get("critical_action_time_factor", 1.0)
 
         self._state.actions_taken.append(chosen_action)
         self._state.revealed_fields.update(REVEALS.get(chosen_action, set()))
@@ -113,14 +124,23 @@ class EmergencyFirstResponseDecisionEngine:
             reward_components["terminal_delta"] = terminal_delta
 
         self._state.last_action_effect = " ".join(effect_messages) if effect_messages else "No meaningful change."
-        observation = self._build_observation()
-        info = self._build_info(
-            reward_signal=RewardSignal(
-                value=round(reward, 3),
-                components={key: round(value, 3) for key, value in reward_components.items()},
-                rationale=self._state.last_action_effect,
-            )
+        reason = self._grader.explain_reward(
+            self._state.task_id,
+            chosen_action,
+            prior_state,
+            self._state.model_copy(deep=True),
+            action_delta,
+            time_decay_factor,
         )
+        observation = self._build_observation()
+        reward_signal = self._build_reward_signal(
+            action_reward=round(action_delta, 3),
+            total_reward=round(reward, 3),
+            time_decay_factor=time_decay_factor,
+            reason=reason,
+            components={key: round(value, 3) for key, value in reward_components.items()},
+        )
+        info = self._build_info(reward_signal=reward_signal)
         return observation, round(reward, 3), self._state.done, info
 
     def state(self) -> InternalState:
@@ -181,6 +201,24 @@ class EmergencyFirstResponseDecisionEngine:
             "reward_signal": reward_signal.model_dump() if reward_signal else None,
         }
 
+    def _build_reward_signal(
+        self,
+        action_reward: float,
+        total_reward: float,
+        time_decay_factor: float,
+        reason: str,
+        components: dict[str, float],
+    ) -> RewardSignal:
+        return RewardSignal(
+            action_reward=round(action_reward, 3),
+            reason=reason,
+            time_decay_factor=round(time_decay_factor, 3),
+            total=round(total_reward, 3),
+            value=round(total_reward, 3),
+            components=components,
+            rationale=reason,
+        )
+
     def _apply_action(self, action: ActionType, effects: list[str]) -> tuple[float, dict[str, float]]:
         task_id = self._state.task_id
         reward = 0.0
@@ -193,11 +231,15 @@ class EmergencyFirstResponseDecisionEngine:
             else:
                 effects.append("Scene appears safe.")
                 reward += 0.4
+            if task_id == "road_accident_hard":
+                reward += 0.6
         elif action == ActionType.CALL_EMERGENCY:
             if not self._state.emergency_called:
                 self._state.emergency_called = True
                 effects.append("Emergency services alerted.")
                 reward += 2.0
+                if task_id == "road_accident_hard" and self._state.airway_controlled:
+                    reward += 0.4
             else:
                 effects.append("Emergency services were already contacted.")
                 reward -= 0.3
@@ -209,10 +251,14 @@ class EmergencyFirstResponseDecisionEngine:
             self._state.breathing_checked = True
             effects.append("Breathing assessed.")
             reward += 1.0
+            if task_id == "road_accident_hard":
+                reward += 0.5
         elif action == ActionType.CHECK_PULSE:
             self._state.pulse_checked = True
             effects.append("Pulse assessed.")
             reward += 0.8
+            if task_id == "road_accident_hard":
+                reward += 0.7
         elif action == ActionType.START_CPR:
             if task_id == "cardiac_arrest_easy":
                 if self._state.true_condition.breathing_status == BreathingStatus.ABSENT:
@@ -243,7 +289,13 @@ class EmergencyFirstResponseDecisionEngine:
                 effects.append("AED use is ineffective or premature here.")
                 reward -= 1.4
         elif action == ActionType.APPLY_PRESSURE:
-            if self._state.true_condition.bleeding_severity in {BleedingSeverity.SEVERE, BleedingSeverity.CRITICAL}:
+            if (
+                task_id == "road_accident_hard"
+                and (not self._state.pulse_checked or not self._state.breathing_checked)
+            ):
+                effects.append("Superficial bleeding control delays recognition of hidden shock.")
+                reward -= 1.4
+            elif self._state.true_condition.bleeding_severity in {BleedingSeverity.SEVERE, BleedingSeverity.CRITICAL}:
                 self._state.pressure_applied = True
                 self._state.true_condition.bleeding_severity = BleedingSeverity.MODERATE
                 effects.append("Direct pressure reduces bleeding.")
@@ -266,6 +318,8 @@ class EmergencyFirstResponseDecisionEngine:
                     self._state.true_condition.breathing_status = BreathingStatus.NORMAL
                 effects.append("Airway supported and breathing improves.")
                 reward += 2.0
+                if task_id == "road_accident_hard" and self._state.breathing_checked:
+                    reward += 0.8
             else:
                 effects.append("Airway support provided, but airway was already clear.")
                 reward -= 0.2
@@ -330,35 +384,34 @@ class EmergencyFirstResponseDecisionEngine:
                 reward += 0.5
                 effects.append("Bleeding control is preserving circulation.")
         elif task_id == "road_accident_hard":
-            if not self._state.pressure_applied:
-                reward -= 1.3
-                if self._state.time_elapsed >= 2:
-                    self._state.true_condition.bleeding_severity = BleedingSeverity.CRITICAL
-                    effects.append("Roadside hemorrhage is worsening.")
-            else:
-                if self._state.true_condition.bleeding_severity == BleedingSeverity.MODERATE:
-                    reward += 0.4
-
             if not self._state.airway_controlled:
+                reward -= 0.8
                 if self._state.time_elapsed >= 3:
-                    self._state.true_condition.airway_status = AirwayStatus.COMPROMISED
                     self._state.true_condition.breathing_status = BreathingStatus.ABSENT
-                    self._state.true_condition.conscious_status = ConsciousStatus.UNCONSCIOUS
-                    reward -= 1.5
-                    effects.append("Airway compromise progresses to respiratory failure.")
-                else:
-                    reward -= 0.6
+                    effects.append("Unmanaged airway compromise worsens ventilation.")
             else:
-                if self._state.true_condition.pulse_status == PulseStatus.WEAK:
-                    self._state.true_condition.pulse_status = PulseStatus.NORMAL
-                reward += 0.7
+                reward += 0.6
                 effects.append("Airway control improves oxygenation.")
 
-            if self._state.true_condition.breathing_status == BreathingStatus.ABSENT and not self._state.cpr_started:
-                if self._state.time_elapsed >= 5:
-                    self._state.true_condition.pulse_status = PulseStatus.ABSENT
-                    effects.append("Prolonged respiratory failure progresses to cardiac arrest.")
-                    reward -= 2.0
+            if not self._state.pulse_checked:
+                reward -= 0.9
+                if self._state.time_elapsed >= 2:
+                    self._state.true_condition.conscious_status = ConsciousStatus.UNCONSCIOUS
+                    self._state.true_condition.pulse_status = PulseStatus.WEAK
+                    effects.append("Occult hemorrhagic shock is missed while circulation goes unassessed.")
+            else:
+                reward += 0.5
+                effects.append("Circulation assessment exposes signs of hidden shock.")
+
+            if not self._state.pressure_applied and self._state.time_elapsed >= 4:
+                self._state.true_condition.pulse_status = PulseStatus.ABSENT
+                reward -= 1.8
+                effects.append("Shock progresses to circulatory collapse without stabilization.")
+            elif self._state.pressure_applied:
+                self._state.true_condition.bleeding_severity = BleedingSeverity.MODERATE
+                self._state.true_condition.pulse_status = PulseStatus.NORMAL
+                reward += 0.6
+                effects.append("Stabilization slows internal hemorrhagic decline.")
         elif task_id == "anaphylaxis_medium":
             if not self._state.airway_controlled:
                 reward -= 0.9
@@ -490,10 +543,12 @@ class EmergencyFirstResponseDecisionEngine:
                 self._state.success = False
         elif self._state.task_id == "road_accident_hard":
             if (
-                self._state.emergency_called
-                and self._state.pressure_applied
+                ActionType.CHECK_SCENE_SAFETY in self._state.actions_taken
+                and self._state.breathing_checked
                 and self._state.airway_controlled
-                and ActionType.CHECK_PULSE in self._state.actions_taken
+                and self._state.emergency_called
+                and self._state.pulse_checked
+                and self._state.pressure_applied
                 and ActionType.MONITOR_PATIENT in self._state.actions_taken
                 and self._state.time_elapsed >= 7
             ):
@@ -555,7 +610,81 @@ class EmergencyFirstResponseDecisionEngine:
         return "moderate"
 
     def _available_actions(self) -> list[ActionType]:
-        return list(ActionType)
+        state = self._state
+        actions: list[ActionType] = [ActionType.WAIT, ActionType.MONITOR_PATIENT]
+
+        if not state.emergency_called:
+            actions.append(ActionType.CALL_EMERGENCY)
+
+        if state.task_id == "cardiac_arrest_easy":
+            actions.extend(
+                [
+                    ActionType.CHECK_RESPONSIVENESS,
+                    ActionType.CHECK_BREATHING,
+                ]
+            )
+            if state.breathing_checked and not state.cpr_started:
+                actions.append(ActionType.START_CPR)
+            if state.cpr_started and not state.aed_used:
+                actions.append(ActionType.USE_AED)
+
+        elif state.task_id == "severe_bleeding_medium":
+            actions.extend(
+                [
+                    ActionType.CHECK_SCENE_SAFETY,
+                    ActionType.CHECK_RESPONSIVENESS,
+                    ActionType.CHECK_PULSE,
+                    ActionType.APPLY_PRESSURE,
+                ]
+            )
+            if state.time_elapsed >= 2:
+                actions.append(ActionType.CHECK_BREATHING)
+
+        elif state.task_id == "road_accident_hard":
+            if ActionType.CHECK_SCENE_SAFETY not in state.actions_taken:
+                actions.append(ActionType.CHECK_SCENE_SAFETY)
+            actions.append(ActionType.CHECK_BREATHING)
+            if state.breathing_checked:
+                actions.append(ActionType.CONTROL_AIRWAY)
+                actions.append(ActionType.CHECK_PULSE)
+            if state.pulse_checked:
+                actions.append(ActionType.APPLY_PRESSURE)
+
+        elif state.task_id == "anaphylaxis_medium":
+            actions.extend(
+                [
+                    ActionType.CHECK_SCENE_SAFETY,
+                    ActionType.CHECK_BREATHING,
+                    ActionType.CHECK_PULSE,
+                ]
+            )
+            if state.breathing_checked:
+                actions.append(ActionType.CONTROL_AIRWAY)
+
+        elif state.task_id == "choking_easy":
+            actions.extend(
+                [
+                    ActionType.CHECK_RESPONSIVENESS,
+                    ActionType.CHECK_BREATHING,
+                ]
+            )
+            if state.responsiveness_checked or state.breathing_checked:
+                actions.append(ActionType.CONTROL_AIRWAY)
+
+        if (
+            state.true_condition.conscious_status == ConsciousStatus.UNCONSCIOUS
+            and state.true_condition.breathing_status != BreathingStatus.ABSENT
+        ):
+            actions.append(ActionType.PLACE_RECOVERY_POSITION)
+
+        if state.task_id not in {"cardiac_arrest_easy", "anaphylaxis_medium", "choking_easy"}:
+            actions.append(ActionType.CHECK_SCENE_SAFETY)
+
+        ordered_unique: list[ActionType] = []
+        for action in actions:
+            if action not in ordered_unique:
+                ordered_unique.append(action)
+        return ordered_unique
 
     def _update_critical_action_counters(self, action: ActionType) -> None:
         if action in CRITICAL_ACTIONS:
