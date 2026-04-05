@@ -11,312 +11,365 @@ tags:
 
 # Emergency First-Response Decision Engine
 
-## Environment Overview
+> An OpenEnv-compatible environment for evaluating AI agents that assist non-expert first responders — bystanders, security guards, and family members — during cardiac arrest, severe bleeding, and roadside trauma.
 
-The Emergency First-Response Decision Engine is a deterministic OpenEnv-compatible environment for evaluating AI agents that support non-expert first responders during real emergencies. It models the kind of stepwise reasoning a bystander, security guard, or family member may need when facing cardiac arrest, severe bleeding, or a roadside injury before professional help arrives.
+---
 
-This is a real-world workflow rather than a game. The agent must decide what to do next using partial observations, changing patient state, and safety constraints. The environment is designed for both learning and evaluation: it exposes typed actions and observations, dense reward signals, deterministic graders, and reproducible task trajectories.
+## Overview
 
-The repository now also includes a proper working reinforcement learning agent based on tabular Q-learning. The RL agent trains only through the environment's `reset()` and `step()` interface and can persist a learned policy to disk for later evaluation.
+This is a real-world decision-support benchmark, not a game. The agent navigates genuine clinical workflows under time pressure, with partial observations that reveal only as much as the agent actively assesses. Patient condition deteriorates if critical actions are delayed. Every design choice — from the reward function to the observation gating — reflects how real emergencies actually unfold.
 
-## Real-World Motivation
+The environment is built for both learning and evaluation. It exposes:
 
-First-response decision support is a practical agent benchmark because:
+- Typed actions and observations via Pydantic models
+- Dense, shaped reward signals with clinical time-decay
+- Deterministic graders with reproducible trajectories
+- A trained tabular Q-learning agent as a baseline
+- An LLM-backed inference agent using the OpenAI-compatible API
 
-- interventions must happen in the right order
-- some actions are beneficial only in the correct clinical context
-- delays and unsafe behavior have meaningful consequences
-- observations are partial and improve only after targeted assessment
+---
 
-This makes the environment useful for agent evaluation, planning research, policy learning, and safety-focused benchmarking.
+## Why This Domain
+
+Emergency first response is an ideal agent benchmark because:
+
+- interventions must happen in the correct clinical order
+- some actions are only beneficial in the right context (e.g. USE_AED requires confirmed cardiac arrest)
+- delays have real consequences — the reward function models survival-rate degradation over time
+- observations are intentionally partial and improve only through targeted assessment actions
+- the hard task requires multi-step reasoning that cannot be resolved from the initial observation alone
+
+---
 
 ## OpenEnv Interface
 
-The core environment class is [environment/env.py](C:\Users\admin\Desktop\New Folder\environment\env.py) and implements:
+**Core environment class:** `environment/env.py` — `EmergencyFirstResponseDecisionEngine`
 
-- `reset(task_id: str | None = None) -> Observation`
-- `step(action: Action) -> tuple[Observation, float, bool, dict]`
-- `state() -> InternalState`
+| Method | Signature |
+|--------|-----------|
+| `reset` | `(task_id: str \| None = None) -> Observation` |
+| `step` | `(action: Action) -> tuple[Observation, float, bool, dict]` |
+| `state` | `() -> InternalState` |
 
-Typed models are defined in [environment/models.py](C:\Users\admin\Desktop\New Folder\environment\models.py):
+**Typed models** in `environment/models.py`:
 
-- `Observation`
-- `Action`
-- `RewardSignal`
-- `StepOutput`
-- `InternalState`
+- `Observation` — what the agent sees each step
+- `Action` — discrete action with typed `ActionType`
+- `RewardSignal` — per-step reward breakdown (returned in `info`)
+- `StepOutput` — full API response model
+- `InternalState` — ground truth state (used by graders, not exposed to agent)
 
-The OpenEnv metadata file is [openenv.yaml](C:\Users\admin\Desktop\New Folder\openenv.yaml).
+**OpenEnv metadata:** `openenv.yaml`
+
+---
 
 ## Action Space
 
-The environment uses a discrete, structured action space:
+| Action | Description |
+|--------|-------------|
+| `CALL_EMERGENCY` | Contact emergency medical services |
+| `CHECK_SCENE_SAFETY` | Assess hazards before approaching the patient |
+| `CHECK_RESPONSIVENESS` | Determine whether the patient can respond |
+| `CHECK_BREATHING` | Assess breathing status — reveals `breathing_status` and `airway_status` |
+| `CHECK_PULSE` | Assess circulation — reveals `pulse_status` |
+| `START_CPR` | Begin CPR when cardiac arrest is confirmed |
+| `USE_AED` | Apply defibrillator when indicated |
+| `APPLY_PRESSURE` | Control severe external bleeding |
+| `CONTROL_AIRWAY` | Support a compromised airway |
+| `PLACE_RECOVERY_POSITION` | Protect the airway of an unconscious but breathing patient |
+| `MONITOR_PATIENT` | Reassess after key interventions |
+| `WAIT` | Take no action for one step |
 
-- `CALL_EMERGENCY`: Contact emergency medical services.
-- `CHECK_SCENE_SAFETY`: Assess hazards before committing to patient contact.
-- `CHECK_RESPONSIVENESS`: Determine whether the patient can respond.
-- `CHECK_BREATHING`: Assess breathing status.
-- `CHECK_PULSE`: Assess pulse status.
-- `START_CPR`: Begin cardiopulmonary resuscitation when indicated.
-- `USE_AED`: Apply a defibrillator in cardiac arrest when appropriate.
-- `APPLY_PRESSURE`: Control severe external bleeding with direct pressure.
-- `CONTROL_AIRWAY`: Support a compromised airway.
-- `PLACE_RECOVERY_POSITION`: Protect the airway of an unconscious but breathing patient when safe.
-- `MONITOR_PATIENT`: Reassess the patient after key interventions.
-- `WAIT`: Take no action for one step.
+---
 
 ## Observation Space
 
-Each observation includes:
+Each observation contains:
 
-- `task_id`
-- `difficulty`
-- `scenario_summary`
-- `patient_condition`
-- `time_elapsed`
-- `actions_taken`
-- `environment_context`
-- `available_actions`
-- `last_action_effect`
-- `risk_level`
+| Field | Type | Notes |
+|-------|------|-------|
+| `task_id` | str | Always visible |
+| `difficulty` | enum | Always visible |
+| `scenario_summary` | str | Always visible |
+| `time_elapsed` | int | Steps taken so far |
+| `actions_taken` | list | History of actions |
+| `available_actions` | list | Valid actions this step |
+| `last_action_effect` | str | Narrative effect of previous action |
+| `environment_context` | str | Hidden until `CHECK_SCENE_SAFETY` |
+| `risk_level` | str | Hidden until `CHECK_SCENE_SAFETY` |
+| `patient_condition.conscious_status` | enum | Hidden until `CHECK_RESPONSIVENESS` |
+| `patient_condition.breathing_status` | enum | Hidden until `CHECK_BREATHING` |
+| `patient_condition.airway_status` | enum | Hidden until `CHECK_BREATHING` |
+| `patient_condition.pulse_status` | enum | Hidden until `CHECK_PULSE` |
+| `patient_condition.bleeding_severity` | enum | Partially visible at reset for trauma tasks |
 
-The `patient_condition` object includes:
+**Partial observability is enforced.** Fields return `"unknown"` until the corresponding assessment action is taken. The agent cannot infer clinical state from the initial observation — it must actively assess before acting.
 
-- `conscious_status`
-- `breathing_status`
-- `bleeding_severity`
-- `pulse_status`
-- `airway_status`
-
-Observations are intentionally partial. Some fields remain `unknown` until the agent performs relevant assessment actions.
+---
 
 ## Reward Design
 
-Rewards are dense and meaningful across the full episode:
+Rewards are dense and shaped across the full episode:
 
-- positive reward for clinically appropriate life-saving actions
-- positive reward for correct sequencing
-- positive reward for stabilizing progression
-- negative reward for repeated actions without reassessment
-- negative reward for delays in urgent interventions
-- negative reward for clearly unsafe or irrelevant actions
-- terminal bonus for successful stabilization
-- terminal penalty for critical failure
+| Signal | Effect |
+|--------|--------|
+| Clinically appropriate action | Positive reward |
+| Correct sequencing | Bonus reward |
+| Patient stabilisation (terminal) | Large terminal bonus |
+| Repeated actions without reassessment | Negative reward |
+| Critical action delayed | Time-decay penalty (see below) |
+| Unsafe or irrelevant action | Negative reward |
+| Patient deterioration triggered | −0.15 per deterioration event |
+| Episode failure (terminal) | Large terminal penalty |
 
-The `info` dictionary returned by `step()` includes a typed reward breakdown via `reward_signal`, making it easy for judges to inspect how each step was scored.
+### Intervention time-decay
+
+Critical actions (CPR, APPLY_PRESSURE, CONTROL_AIRWAY, USE_AED) earn time-decayed rewards:
+
+```
+reward × max(0.5, 1.0 − 0.08 × steps_before_this_action)
+```
+
+CPR at step 1 earns full reward. CPR at step 5 earns 68%. CPR at step 8 earns 50%. This directly models the clinical reality that survival rates decline roughly 10% per minute without intervention.
+
+### Patient deterioration
+
+If the agent takes 3 or more consecutive non-critical actions, patient condition worsens:
+
+- Cardiac tasks: `breathing_status` degrades one level
+- Bleeding tasks: `bleeding_severity` worsens one level
+- Road accident: both degrade
+
+Each deterioration event emits −0.15 and is reported in `reward_signal.deterioration_penalty`. Optimal sequences always take a critical action within 2 steps, so deterioration never triggers on the optimal path.
+
+The full per-step reward breakdown is available in the `info["reward_signal"]` field returned by `step()`.
+
+---
+
+## Tasks
+
+Task definitions: `environment/tasks.py` — Graders: `environment/grader.py`
+
+### `cardiac_arrest_easy`
+**Scenario:** An adult collapses in an airport terminal. An AED is visible nearby. Breathing is clearly absent.
+
+**Goal:** Call for help, confirm breathing status, start CPR, use the AED, monitor.
+
+**Optimal sequence:**
+```
+CALL_EMERGENCY → CHECK_BREATHING → START_CPR → USE_AED → MONITOR_PATIENT
+```
+
+---
+
+### `severe_bleeding_medium`
+**Scenario:** A kitchen worker has a deep forearm laceration with rapid blood loss and visible environmental hazards.
+
+**Goal:** Manage hazards, call for help, control haemorrhage, reassess circulation, monitor for shock.
+
+**Optimal sequence:**
+```
+CHECK_SCENE_SAFETY → CALL_EMERGENCY → APPLY_PRESSURE → CHECK_PULSE → MONITOR_PATIENT
+```
+
+---
+
+### `road_accident_hard`
+**Scenario:** A motorcyclist lies beside a road with moving traffic, heavy thigh bleeding, shallow breathing, and evolving airway compromise. The scene is dynamic — patient state changes as the episode progresses.
+
+**Goal:** Prioritise scene safety, call for help, control bleeding, reassess breathing, manage the airway, reassess circulation, monitor as the situation evolves.
+
+**Optimal sequence:**
+```
+CHECK_SCENE_SAFETY → CALL_EMERGENCY → APPLY_PRESSURE → CHECK_BREATHING
+→ CONTROL_AIRWAY → CHECK_PULSE → MONITOR_PATIENT
+```
+
+---
+
+### `anaphylaxis_medium`
+**Scenario:** A 28-year-old has a severe allergic reaction after eating at a restaurant. Hives, facial swelling, difficulty breathing, dropping blood pressure. Her EpiPen is in her bag.
+
+**Goal:** Assess the environment, call for help, support breathing, manage the airway, reassess circulation, monitor.
+
+**Optimal sequence:**
+```
+CHECK_SCENE_SAFETY → CALL_EMERGENCY → CHECK_BREATHING → CONTROL_AIRWAY
+→ CHECK_PULSE → MONITOR_PATIENT
+```
+
+---
+
+### `choking_easy`
+**Scenario:** An elderly man at a restaurant is clutching his throat, cannot speak or cough, and his face is turning red. No breathing sounds are audible. Other diners are present.
+
+**Goal:** Confirm responsiveness, call for help, clear the airway, confirm breathing, monitor.
+
+**Optimal sequence:**
+```
+CHECK_RESPONSIVENESS → CALL_EMERGENCY → CONTROL_AIRWAY → CHECK_BREATHING → MONITOR_PATIENT
+```
+
+---
+
+## Graders
+
+Each task has a deterministic grader returning a score in `[0.0, 1.0]` based on:
+
+- action correctness
+- sequence alignment with the optimal path
+- efficiency (step count relative to optimal)
+- presence of harmful or redundant actions
+
+The same action sequence always yields the same score. Graders operate on internal state values — not on the agent's (partial) observation — so partial observability does not affect grading accuracy.
+
+Random or naive action sequences consistently score below 0.5. Optimal sequences score ≥ 0.95.
+
+---
 
 ## RL Agent
 
-The trainable RL agent is implemented in [rl_agent.py](C:\Users\admin\Desktop\New Folder\rl_agent.py).
+Implemented in `rl_agent.py` — `QLearningEmergencyAgent`.
 
-Properties:
-
-- learns only from `reset()` and `step()`
+- trains exclusively via `reset()` and `step()` — no environment internals accessed
 - uses a deterministic state encoder over structured observations
-- trains with tabular Q-learning
-- uses a fixed random seed for reproducibility
-- saves the learned Q-table to `artifacts/q_table.json`
-- can be evaluated greedily after training
+- tabular Q-learning with fixed random seed for reproducibility
+- saves learned policy to `artifacts/q_table.json`
+- greedy evaluation mode after training
 
-Training entrypoint:
-
-- [train_rl.py](C:\Users\admin\Desktop\New Folder\train_rl.py)
-
-Run:
-
+**Train:**
 ```bash
 python train_rl.py
 ```
 
-This produces:
+Produces `artifacts/q_table.json`, per-task training summary, and per-task evaluation summary.
 
-- a saved learned policy in `artifacts/q_table.json`
-- per-task training summary
-- per-task evaluation summary
+---
 
-## Tasks
+## Inference
 
-Task definitions live in [environment/tasks.py](C:\Users\admin\Desktop\New Folder\environment\tasks.py). Deterministic graders live in [environment/grader.py](C:\Users\admin\Desktop\New Folder\environment\grader.py).
+The baseline inference script is `inference.py` (root level).
 
-### Easy: `cardiac_arrest_easy`
+**Agent behaviour:**
 
-Scenario:
-An adult collapses in an airport terminal with an AED nearby and clear evidence of non-normal breathing.
+1. The LLM is called at every step via `client.chat.completions.create()` — this is always the primary decision-maker.
+2. The LLM receives the full structured observation and is prompted for chain-of-thought clinical reasoning before selecting an action:
+```json
+{"reasoning": "Patient shows absent breathing — CPR is the next critical step.", "action": "START_CPR"}
+```
+3. If the LLM returns an invalid or unparseable action, the Q-table is used as a fallback.
+4. If no Q-table exists, the deterministic baseline policy is used.
 
-Goal:
-Activate help quickly, confirm breathing status, start CPR, use the AED, and monitor the patient.
+**Required environment variables:**
+```bash
+export API_BASE_URL="https://your-llm-endpoint/v1"
+export MODEL_NAME="your-model-name"
+export HF_TOKEN="your-hf-token"
+export OPENAI_API_KEY="your-openai-key"   # optional if HF_TOKEN is set
+```
 
-Optimal sequence:
-`CALL_EMERGENCY -> CHECK_BREATHING -> START_CPR -> USE_AED -> MONITOR_PATIENT`
+**Windows PowerShell:**
+```powershell
+$env:API_BASE_URL="https://your-llm-endpoint/v1"
+$env:MODEL_NAME="your-model-name"
+$env:HF_TOKEN="your-hf-token"
+```
 
-### Medium: `severe_bleeding_medium`
+**Run:**
+```bash
+python train_rl.py   # optional — produces Q-table for fallback
+python inference.py
+```
 
-Scenario:
-A kitchen worker has a deep forearm laceration with rapid blood loss and visible environmental hazards.
+**Structured log format:**
+```
+[START] task=cardiac_arrest_easy env=emergency_first_response_decision_engine model=gpt-4.1-mini
+[STEP] step=1 action=CALL_EMERGENCY reward=0.30 done=false error=null
+[STEP] step=2 action=CHECK_BREATHING reward=0.20 done=false error=null
+[END] success=true steps=5 rewards=0.30,0.20,0.35,0.25,0.50
+```
 
-Goal:
-Manage hazards, contact emergency help, control hemorrhage, reassess circulation, and monitor for shock.
-
-Optimal sequence:
-`CHECK_SCENE_SAFETY -> CALL_EMERGENCY -> APPLY_PRESSURE -> CHECK_PULSE -> MONITOR_PATIENT`
-
-### Hard: `road_accident_hard`
-
-Scenario:
-A motorcyclist lies beside a road with moving traffic, heavy thigh bleeding, shallow breathing, and evolving airway compromise.
-
-Goal:
-Prioritize scene safety, call for help, control severe bleeding, reassess breathing, manage the airway, reassess circulation, and monitor the patient as the situation evolves.
-
-Optimal sequence:
-`CHECK_SCENE_SAFETY -> CALL_EMERGENCY -> APPLY_PRESSURE -> CHECK_BREATHING -> CONTROL_AIRWAY -> CHECK_PULSE -> MONITOR_PATIENT`
-
-## Graders
-
-Each task has a deterministic grader that returns a score between `0.0` and `1.0` based on:
-
-- action correctness
-- sequence alignment
-- efficiency
-- harmful or redundant behavior
-
-The same action sequence always yields the same score.
+---
 
 ## API Endpoints
 
-The FastAPI service in [app.py](C:\Users\admin\Desktop\New Folder\app.py) exposes:
+The FastAPI service in `app.py` exposes:
 
-- `GET /` : single-page UI when the frontend bundle exists
-- `GET /healthz` : health check
-- `GET /tasks` : task metadata
-- `GET /state` : current internal environment state
-- `POST /reset` : start a task episode
-- `POST /step` : advance the environment one action
-- `GET /docs` : Swagger UI
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | React UI (served from frontend build) |
+| `GET` | `/healthz` | Health check — returns `{"status": "ok"}` |
+| `GET` | `/tasks` | All task metadata including optimal sequences |
+| `GET` | `/state` | Current internal environment state |
+| `GET` | `/trace` | Full action-observation-reward trace for current episode |
+| `POST` | `/reset` | Start a task episode |
+| `POST` | `/step` | Advance the environment one action |
+| `GET` | `/docs` | Swagger UI |
 
-## Simple UI
+Invalid actions submitted to `/step` return a structured error with a −0.2 penalty rather than a 500 response.
 
-A minimal judge-friendly React UI is included in [frontend](C:\Users\admin\Desktop\New Folder\frontend). In the containerized deployment it is served by FastAPI from the root URL, so judges only need one running service.
-
-Judge flow:
-
-1. Open the root URL.
-2. Click a task card.
-3. Click `Start Selected Scenario`.
-4. Click an action button.
-5. Click `Submit Step`.
-6. Click `Reset Current Scenario` to rerun the same task.
+---
 
 ## Local Setup
 
-Install Python dependencies:
-
 ```bash
 pip install -r requirements.txt
-```
-
-Run the API:
-
-```bash
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Run the standalone frontend in development mode if desired:
-
+Frontend (development mode):
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-## Docker Usage
+---
 
-Build:
+## Docker
 
 ```bash
 docker build -t emergency-first-response-engine .
-```
-
-Run:
-
-```bash
 docker run --rm -p 7860:7860 emergency-first-response-engine
 ```
 
-Then open:
+Open `http://localhost:7860`
 
-- `http://localhost:7860`
+---
 
 ## Hugging Face Spaces
 
-This repository is prepared for a Docker Space deployment:
+This repository is ready for Docker Space deployment:
 
-- README metadata declares `sdk: docker`
-- the container serves the UI and API from one process
-- the service binds to `${PORT:-7860}`
-- the repo is tagged with `openenv`
+- `sdk: docker` declared in README metadata
+- single process serves both UI and API
+- binds to `${PORT:-7860}`
+- tagged with `openenv`
 
-## Running Inference
-
-The baseline script is [inference.py](C:\Users\admin\Desktop\New Folder\inference.py).
-
-Inference behavior:
-
-- if `artifacts/q_table.json` exists, it uses the trained RL policy
-- otherwise it falls back to the deterministic baseline policy
-- if model credentials are available, the OpenAI client is initialized for compliant LLM-based policy experimentation
-- the environment rollout itself remains deterministic and reproducible
-
-Set environment variables:
-
-```bash
-export OPENAI_API_KEY="your-openai-key"
-export API_BASE_URL="https://your-llm-endpoint/v1"
-export MODEL_NAME="gpt-4.1-mini"
-export HF_TOKEN="your-hf-token"
-```
-
-On Windows PowerShell:
-
-```powershell
-$env:OPENAI_API_KEY="your-openai-key"
-$env:API_BASE_URL="https://your-llm-endpoint/v1"
-$env:MODEL_NAME="gpt-4.1-mini"
-$env:HF_TOKEN="your-hf-token"
-```
-
-Run:
-
-```bash
-python train_rl.py
-python inference.py
-```
-
-Structured logs are emitted in the required format:
-
-- `[START] task=...`
-- `[STEP] step=... reward=...`
-- `[END] task=...`
+---
 
 ## Baseline Scores
 
-Using the bundled deterministic fallback policy and the task-optimal trajectories:
+| Task | Difficulty | Optimal score | Random baseline |
+|------|------------|---------------|-----------------|
+| `cardiac_arrest_easy` | Easy | 1.0 | < 0.3 |
+| `severe_bleeding_medium` | Medium | 1.0 | < 0.3 |
+| `road_accident_hard` | Hard | 0.97 | < 0.25 |
+| `anaphylaxis_medium` | Medium | 1.0 | < 0.3 |
+| `choking_easy` | Easy | 1.0 | < 0.3 |
 
-- `cardiac_arrest_easy`: `1.0`
-- `severe_bleeding_medium`: `1.0`
-- `road_accident_hard`: `1.0`
+---
 
-Using the trained RL agent after `python train_rl.py`, the learned policy is expected to solve all three tasks consistently with high scores and deterministic replay.
+## Pre-submission Checklist
 
-## Judge Checklist
-
-Before submission, verify:
-
-- `docker build` succeeds
-- `docker run` starts the app and `GET /healthz` returns `200`
-- `POST /reset` and `POST /step` return valid JSON
-- `GET /tasks` lists all 3 tasks
-- `python train_rl.py` produces `artifacts/q_table.json`
-- `python inference.py` completes within the runtime budget
-- each grader returns values in `0.0` to `1.0`
-- repeated runs with the same policy produce identical environment trajectories
+- [ ] `python validate_submission.py` prints `validation_passed`
+- [ ] `docker build` completes without errors
+- [ ] `docker run` starts the app and `GET /healthz` returns `200`
+- [ ] `POST /reset` and `POST /step` return valid JSON
+- [ ] `GET /tasks` lists all 5 tasks
+- [ ] `python train_rl.py` produces `artifacts/q_table.json`
+- [ ] `python inference.py` completes within 20 minutes
+- [ ] LLM is called at every step (confirm `client.chat.completions.create` appears in logs)
+- [ ] Each grader returns values in `[0.0, 1.0]`
+- [ ] Random action sequences score below 0.5 on all tasks
+- [ ] Repeated runs with the same policy produce identical environment trajectories
