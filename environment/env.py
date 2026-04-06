@@ -403,7 +403,7 @@ class EmergencyFirstResponseDecisionEngine:
                 reward += 0.5
                 effects.append("Circulation assessment exposes signs of hidden shock.")
 
-            if not self._state.pressure_applied and self._state.time_elapsed >= 4:
+            if not self._state.pressure_applied and self._state.time_elapsed >= 6:
                 self._state.true_condition.pulse_status = PulseStatus.ABSENT
                 reward -= 1.8
                 effects.append("Shock progresses to circulatory collapse without stabilization.")
@@ -549,7 +549,8 @@ class EmergencyFirstResponseDecisionEngine:
                 and self._state.emergency_called
                 and self._state.pulse_checked
                 and self._state.pressure_applied
-                and ActionType.MONITOR_PATIENT in self._state.actions_taken
+                and self._state.actions_taken
+                and self._state.actions_taken[-1] == ActionType.MONITOR_PATIENT
                 and self._state.time_elapsed >= 7
             ):
                 self._state.done = True

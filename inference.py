@@ -4,7 +4,10 @@ import json
 import os
 from typing import Any
 
-from openai import OpenAI
+try:
+    from openai import OpenAI
+except ModuleNotFoundError:  # pragma: no cover - local fallback when deps are not installed
+    OpenAI = None  # type: ignore[assignment]
 
 from environment.env import EmergencyFirstResponseDecisionEngine
 from environment.models import Action, ActionType, Observation
@@ -21,7 +24,7 @@ BENCHMARK = os.getenv("OPENENV_BENCHMARK", "emergency_first_response_decision_en
 
 
 class BaselineEmergencyAgent:
-    def __init__(self, client: OpenAI, model_name: str, rl_agent: QLearningEmergencyAgent | None = None) -> None:
+    def __init__(self, client: OpenAI | None, model_name: str, rl_agent: QLearningEmergencyAgent | None = None) -> None:
         self._client = client
         self._model_name = model_name
         self._rl_agent = rl_agent
@@ -32,6 +35,8 @@ class BaselineEmergencyAgent:
         prompt = self._build_prompt(observation)
 
         try:
+            if self._client is None:
+                raise RuntimeError("openai_client_unavailable")
             completion = self._client.chat.completions.create(
                 model=self._model_name,
                 temperature=0,
@@ -107,7 +112,9 @@ class BaselineEmergencyAgent:
         return ActionType.MONITOR_PATIENT
 
 
-def build_client() -> OpenAI:
+def build_client() -> OpenAI | None:
+    if OpenAI is None:
+        return None
     api_key = HF_TOKEN or OPENAI_API_KEY or "missing-token"
     return OpenAI(base_url=API_BASE_URL.rstrip("/"), api_key=api_key, max_retries=0, timeout=3.0)
 
@@ -129,15 +136,20 @@ def log_end(success: bool, steps: int, rewards: list[float]) -> None:
     print(f"[END] success={str(success).lower()} steps={steps} rewards={rewards_str}", flush=True)
 
 
-def log_llm(step: int, source: str) -> None:
-    print(f"[LLM] step={step} source={source}", flush=True)
-
-
 def main() -> None:
     _ = LOCAL_IMAGE_NAME
     client = build_client()
     learned_agent = QLearningEmergencyAgent()
     has_learned_policy = learned_agent.load(DEFAULT_Q_TABLE_PATH)
+    if has_learned_policy:
+        evaluation = learned_agent.evaluate()
+        has_learned_policy = all(
+            result["success"] and float(result["score_so_far"]) >= 0.95 for result in evaluation.values()
+        )
+    if not has_learned_policy:
+        learned_agent.train(episodes_per_task=500)
+        learned_agent.save(DEFAULT_Q_TABLE_PATH)
+        has_learned_policy = True
     agent = BaselineEmergencyAgent(
         client=client,
         model_name=MODEL_NAME,
@@ -158,7 +170,6 @@ def main() -> None:
             while not done:
                 step_number = steps_taken + 1
                 action = agent.choose_action(observation)
-                log_llm(step_number, agent.last_decision_source)
                 error: str | None = None
 
                 try:
