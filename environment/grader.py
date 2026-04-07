@@ -156,7 +156,7 @@ class EmergencyTaskGrader:
             score -= 0.08
         if normalized and normalized[0] == ActionType.START_CPR:
             score -= 0.15
-        return round(max(0.0, min(1.0, score)), 4)
+        return self._finalize_score(score)
 
     def grade_anaphylaxis(self, actions: Iterable[ActionType | str]) -> float:
         normalized = self._normalize(actions)
@@ -165,14 +165,14 @@ class EmergencyTaskGrader:
             airway_index = normalized.index(ActionType.CONTROL_AIRWAY)
             if ActionType.CHECK_BREATHING not in normalized[:airway_index]:
                 score -= 0.2
-        return round(max(0.0, min(1.0, score)), 4)
+        return self._finalize_score(score)
 
     def grade_choking(self, actions: Iterable[ActionType | str]) -> float:
         normalized = self._normalize(actions)
         score = self._base_grade("choking_easy", normalized)
         wait_count = sum(1 for action in normalized if action == ActionType.WAIT)
         score -= 0.12 * wait_count
-        return round(max(0.0, min(1.0, score)), 4)
+        return self._finalize_score(score)
 
     def _base_grade(self, task_id: str, actions: list[ActionType]) -> float:
         task = TASKS[task_id]
@@ -193,7 +193,12 @@ class EmergencyTaskGrader:
         efficiency = 0.15 * min(1.0, len(optimal) / len(actions))
         safety = max(0.0, 0.05 - 0.03 * harmful_count - 0.01 * duplicate_count)
 
-        return round(max(0.0, min(1.0, correctness + efficiency + safety)), 4)
+        return self._finalize_score(correctness + efficiency + safety)
+
+    def _finalize_score(self, score: float) -> float:
+        # Submission validator requires task scores to stay strictly inside (0, 1).
+        clamped = max(0.0, min(0.99, score))
+        return round(clamped, 4)
 
     def _normalize(self, actions: Iterable[ActionType | str]) -> list[ActionType]:
         return [action if isinstance(action, ActionType) else ActionType(action) for action in actions]
