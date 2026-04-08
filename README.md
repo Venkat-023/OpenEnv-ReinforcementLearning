@@ -7,11 +7,25 @@ tags:
   - fastapi
   - reinforcement-learning
   - decision-support
+  - medical-ai
+  - emergency-response
+  - benchmark
+  - agent-evaluation
+  - pytorch
+  - rl-environment
 ---
 
 # Emergency First-Response Decision Engine
 
 OpenEnv-compatible reinforcement learning environment for emergency decision support under uncertainty, time pressure, and clinical risk.
+
+## Try It Instantly
+
+👉 **[https://huggingface.co/spaces/Venkat-023/OpenEnv](https://huggingface.co/spaces/Venkat-023/OpenEnv)**
+
+No setup needed — open the link and start testing the environment directly from your browser.
+
+---
 
 ## Problem Statement
 
@@ -68,30 +82,68 @@ In other words, we want this project to contribute to a future where agent evalu
 
 This environment is designed to be memorable to judges and useful to researchers because it combines five properties that are rarely present together:
 
-1. **Real-world utility**
-   It models a task humans actually perform during emergencies.
+1. **Real-world utility** — It models a task humans actually perform during emergencies.
+2. **Partial observability** — The full patient state is not visible at reset. Information must be earned by assessment.
+3. **Clinically meaningful sequencing** — Actions are not just right or wrong; they can be correct but late, technically available but unsafe, or superficially sensible while missing the true life threat.
+4. **Deceptive hard-case design** — The hardest trauma task intentionally hides the real danger behind misleading early cues.
+5. **Deterministic evaluation** — The benchmark is reproducible, auditable, and suitable for consistent grading.
 
-2. **Partial observability**
-   The full patient state is not visible at reset. Information must be earned by assessment.
+---
 
-3. **Clinically meaningful sequencing**
-   Actions are not just right or wrong; they can be correct but late, technically available but unsafe, or superficially sensible while missing the true life threat.
+## Tasks (5 Total)
 
-4. **Deceptive hard-case design**
-   The hardest trauma task intentionally hides the real danger behind misleading early cues.
+All five tasks are defined in `environment/tasks.py` and registered in `openenv.yaml`.
 
-5. **Deterministic evaluation**
-   The benchmark is reproducible, auditable, and suitable for consistent grading.
+| Task ID | Difficulty | Scenario | Key Challenge |
+|---|---|---|---|
+| `cardiac_arrest_easy` | Easy | Collapse in airport terminal with AED nearby | Follow clear CPR + AED protocol without delay |
+| `severe_bleeding_medium` | Medium | Kitchen laceration with rapid blood loss | Prioritize scene safety, bleeding control, and shock monitoring |
+| `road_accident_hard` | Hard | Roadside crash with minor visible wound | Detect hidden internal hemorrhagic shock behind deceptive surface cues |
+| `anaphylaxis_medium` | Medium | Severe allergic reaction with airway compromise | Assess breathing before airway intervention; activate help early |
+| `choking_easy` | Easy | Elderly man choking in restaurant | Act fast — delays are heavily penalized in this task |
+
+### 1. Cardiac Arrest — Easy
+
+A recognizable public collapse scenario with AED access nearby. The agent must escalate quickly, confirm breathing status, start CPR, use AED, and monitor after intervention. Tests whether the agent can follow an obvious life-saving protocol without unnecessary delay.
+
+### 2. Severe Bleeding — Medium
+
+Visible hemorrhage with environmental hazards and circulation reassessment. The agent must account for hazards, escalate appropriately, control major bleeding, assess pulse, and monitor for shock. Tests multi-step trauma sequencing.
+
+### 3. Road Accident with Hidden Shock — Hard
+
+The most distinctive task in the benchmark. Minor visible bleeding masks evolving internal hemorrhagic shock plus airway compromise. The agent must avoid being fooled by surface appearance, work through ABC-style assessment, detect circulation compromise, and intervene before collapse. This is genuine sequential reasoning under misleading information.
+
+### 4. Anaphylaxis — Medium
+
+A severe allergic reaction with airway compromise. The agent must recognize the airway risk early, activate emergency services, and ensure breathing assessment precedes any airway intervention. Delayed airway support leads to progressive obstruction and cardiovascular collapse.
+
+### 5. Choking — Easy
+
+An obvious upper-airway obstruction where delay is especially dangerous. The agent must quickly establish responsiveness, call for help, and clear the airway. Every WAIT action is penalized. Inaction causes unconsciousness and arrest.
+
+---
+
+## Scoring
+
+Scores are deterministic and bounded strictly inside (0, 1) for every task. The grader penalizes harmful actions, incorrect sequencing, and inefficiency.
+
+| Factor | Weight |
+|---|---|
+| Correct action order (positional match) | 60% |
+| Critical action coverage (unique hits) | 20% |
+| Efficiency (steps used vs optimal) | 15% |
+| Safety (no harmful or duplicate actions) | 5% |
+
+Additional per-task penalties apply:
+
+- `road_accident_hard` — extra penalty for skipping pulse check or starting CPR before assessment
+- `anaphylaxis_medium` — extra penalty for airway intervention before breathing assessment
+- `choking_easy` — cumulative penalty per WAIT action
+
+---
 
 ## Environment Overview
-
-The environment simulates emergency first-response decision-making across a set of escalating scenarios:
-
-- cardiac arrest
-- severe external bleeding
-- deceptive roadside trauma with hidden shock
-- anaphylaxis
-- choking
 
 The benchmark is implemented around the standard OpenEnv interface:
 
@@ -221,69 +273,6 @@ Each step returns a structured `reward_signal` with:
 
 This makes the reward not only useful for learning, but also inspectable for reviewers.
 
-## Tasks
-
-Task definitions live in `environment/tasks.py`.
-
-### 1. Cardiac Arrest — Easy
-
-This task presents a recognizable public collapse scenario with AED access nearby.
-
-What the agent must do:
-
-- escalate quickly
-- confirm breathing status
-- start CPR
-- use AED
-- monitor after intervention
-
-Why it matters:
-
-It tests whether the agent can identify and follow an obvious life-saving protocol without unnecessary delay.
-
-### 2. Severe Bleeding — Medium
-
-This task introduces visible hemorrhage, environmental hazards, and circulation reassessment.
-
-What the agent must do:
-
-- account for hazards
-- escalate appropriately
-- control major bleeding
-- assess pulse
-- monitor for shock
-
-Why it matters:
-
-It tests whether the agent can manage a multi-step trauma sequence rather than simply react to one symptom.
-
-### 3. Road Accident with Hidden Shock — Hard
-
-This is the most important and most distinctive task in the benchmark.
-
-The patient appears to have only minor visible bleeding, but the true life threat is evolving internal hemorrhagic shock plus airway compromise.
-
-What the agent must do:
-
-- avoid being fooled by surface appearance
-- work through ABC-style assessment
-- detect circulation compromise
-- stabilize airway and circulation
-- intervene in the right order before collapse
-
-Why it matters:
-
-This task moves the environment beyond obvious protocol recall and into genuine sequential reasoning under misleading information.
-
-### Additional Tasks
-
-To improve coverage and benchmark breadth, the environment also includes:
-
-- `anaphylaxis_medium`
-- `choking_easy`
-
-These tasks stress airway-first decision-making in different clinical contexts.
-
 ## Graders
 
 Graders are deterministic and implemented in `environment/grader.py`.
@@ -293,10 +282,8 @@ Properties:
 - task-specific
 - programmatic
 - reproducible
-- bounded strictly inside `(0, 1)` for successful trajectories
+- bounded strictly inside `(0, 1)` for all trajectories
 - sensitive to harmful actions, ordering mistakes, and inefficiency
-
-This was an explicit design choice to satisfy strict validator requirements while preserving meaningful ranking signal.
 
 ## State-Aware Action Availability
 
@@ -393,41 +380,31 @@ Frontend files:
 - `frontend/src/App.jsx`
 - `frontend/src/styles.css`
 
+---
+
 ## Local Setup
 
-Backend:
+Quickstart with Docker (recommended):
 
+```bash
+docker build -t emergency-first-response-engine .
+docker run --rm -p 7860:7860 emergency-first-response-engine
+# Open http://localhost:7860
+```
+
+Manual setup:
+
+Backend:
 ```bash
 pip install -r requirements.txt
 uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
 Frontend:
-
 ```bash
 cd frontend
 npm install
 npm run dev
-```
-
-## Docker
-
-Build:
-
-```bash
-docker build -t emergency-first-response-engine .
-```
-
-Run:
-
-```bash
-docker run --rm -p 7860:7860 emergency-first-response-engine
-```
-
-Open:
-
-```text
-http://localhost:7860
 ```
 
 ## Hugging Face Spaces
@@ -453,6 +430,26 @@ Recommended external checks:
 - `docker build`
 - Space ping against `/reset`
 
+---
+
+## Limitations
+
+- The environment models non-expert first-response, not advanced clinical care. Actions like medication administration are intentionally out of scope.
+- Partial observability is rule-based, not stochastic. Noise models are not yet implemented.
+- RL baseline uses tabular Q-learning; deep RL methods have not been evaluated yet.
+- Tasks cover five scenarios; broader emergency coverage is planned in future work.
+
+## Future Work
+
+- Richer clinical cues and temporal trend summaries
+- Broader first-aid and field-response scenarios such as burns, drowning, and seizure
+- Deep RL baselines and policy-learning studies
+- Human-evaluable episode traces
+- Comparative evaluation across frontier LLMs and RL agents
+- Safer, more interpretable decision-support benchmarking for real-world deployment research
+
+---
+
 ## Why This Project Matters
 
 This benchmark is ultimately about trust.
@@ -468,17 +465,8 @@ We believe future agent benchmarks must move beyond convenience tasks and begin 
 
 The Emergency First-Response Decision Engine is our contribution toward that future.
 
-## Our Vision After This Project
+---
 
-By the end of this project, we want to deliver more than a hackathon submission. We want to create a foundation for a broader class of high-stakes agent benchmarks.
+## Team
 
-The future direction includes:
-
-- richer clinical cues and temporal trend summaries
-- broader first-aid and field-response scenarios
-- stronger RL baselines and policy-learning studies
-- human-evaluable episode traces
-- comparative evaluation across frontier LLMs and RL agents
-- safer, more interpretable decision-support benchmarking for real-world deployment research
-
-If this project succeeds, it demonstrates that OpenEnv environments can be used not only for convenience workflows, but for building the next generation of safety-critical agent evaluation.
+- **Venkat** — [GitHub: Venkat-023](https://github.com/Venkat-023)
