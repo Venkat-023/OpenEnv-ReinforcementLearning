@@ -115,7 +115,9 @@ class BaselineEmergencyAgent:
 def build_client() -> OpenAI | None:
     if OpenAI is None:
         return None
-    api_key = OPENAI_API_KEY or HF_TOKEN or "missing-token"
+    api_key = OPENAI_API_KEY or HF_TOKEN
+    if not api_key:
+        return None
     return OpenAI(base_url=API_BASE_URL.rstrip("/"), api_key=api_key, max_retries=0, timeout=3.0)
 
 
