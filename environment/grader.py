@@ -178,7 +178,7 @@ class EmergencyTaskGrader:
         task = TASKS[task_id]
         optimal = task.optimal_sequence
         if not actions:
-            return 0.0
+            return 0.01
 
         matched_positions = sum(
             1 for index, action in enumerate(actions[: len(optimal)]) if action == optimal[index]
@@ -197,7 +197,7 @@ class EmergencyTaskGrader:
 
     def _finalize_score(self, score: float) -> float:
         # Submission validator requires task scores to stay strictly inside (0, 1).
-        clamped = max(0.0, min(0.99, score))
+        clamped = max(0.01, min(0.99, score))
         return round(clamped, 4)
 
     def _normalize(self, actions: Iterable[ActionType | str]) -> list[ActionType]:
