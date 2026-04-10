@@ -144,6 +144,11 @@ def main() -> None:
     client = build_client()
     learned_agent = QLearningEmergencyAgent()
     has_learned_policy = learned_agent.load(DEFAULT_Q_TABLE_PATH)
+    if has_learned_policy:
+        evaluation = learned_agent.evaluate()
+        has_learned_policy = all(
+            result["success"] and float(result["score_so_far"]) >= 0.95 for result in evaluation.values()
+        )
     agent = BaselineEmergencyAgent(
         client=client,
         model_name=MODEL_NAME,
