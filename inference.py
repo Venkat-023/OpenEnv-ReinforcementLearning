@@ -70,7 +70,6 @@ class BaselineEmergencyAgent:
         if self._rl_agent is not None:
             rl_action = self._rl_agent.choose_action(observation, greedy=True)
             if rl_action in observation.available_actions:
-                self.last_decision_source = "rl_fallback"
                 return rl_action
 
         self.last_decision_source = "policy_fallback"
